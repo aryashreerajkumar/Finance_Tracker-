@@ -1,0 +1,1155 @@
+================================================================================
+FILE: README.md
+================================================================================
+# Personal Finance Tracker
+
+A beginner-friendly Java 26 Swing application for tracking Indian Rupee income and expenses. Data is stored in `finance.db` using SQLite, and reports use JFreeChart.
+
+## Requirements
+
+- Java 26
+- Maven 3.10 or newer
+
+## Run
+
+From this directory:
+
+```text
+mvn compile exec:java -Dexec.mainClass="financetracker.Main"
+```
+
+Build the runnable shaded JAR:
+
+```text
+mvn clean package
+java -jar target/finance-tracker-1.0.0.jar
+```
+
+Load approximately thirty sample transactions from the command line:
+
+```text
+mvn compile exec:java -Dexec.mainClass="financetracker.SeedData"
+```
+
+The database file is created automatically beside the project when the application first starts. Amounts are positive whole numbers, stored as `long`, and displayed with Indian grouping and the `₹` symbol.
+
+## Features
+
+- Dashboard cards for income, expense, balance, current-month totals, and top spending categories
+- Add, edit, delete, and filter transactions
+- Monthly category and month-by-month summaries
+- Pie, bar, and balance-trend charts
+- CSV export for filtered transactions and summaries
+- Friendly validation and empty-database handling
+
+## Eight test cases
+
+1. Save `2026-10-27`, `Income`, `Salary`, `75,000`: transaction saves and displays as `₹75,000`.
+2. Save an empty amount: shows `Please enter the amount.`
+3. Save amount `0`: shows the whole-number validation error.
+4. Save amount `100,000,001`: shows the whole-number validation error.
+5. Enter amount `12.50`: rejects decimals.
+6. Enter a future date: shows a future-date error.
+7. Leave category empty in the edit dialog: shows the category validation error.
+8. Select a row, choose Delete, and cancel confirmation: record remains unchanged.
+
+
+================================================================================
+FILE: pom.xml
+================================================================================
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <groupId>financetracker</groupId>
+    <artifactId>finance-tracker</artifactId>
+    <version>1.0.0</version>
+    <packaging>jar</packaging>
+
+    <properties>
+        <maven.compiler.release>26</maven.compiler.release>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <sqlite.version>3.50.3.0</sqlite.version>
+        <jfreechart.version>1.5.5</jfreechart.version>
+        <flatlaf.version>3.6.1</flatlaf.version>
+    </properties>
+
+    <dependencies>
+        <dependency>
+            <groupId>org.xerial</groupId>
+            <artifactId>sqlite-jdbc</artifactId>
+            <version>${sqlite.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.jfree</groupId>
+            <artifactId>jfreechart</artifactId>
+            <version>${jfreechart.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.formdev</groupId>
+            <artifactId>flatlaf</artifactId>
+            <version>${flatlaf.version}</version>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>exec-maven-plugin</artifactId>
+                <version>3.5.0</version>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-shade-plugin</artifactId>
+                <version>3.6.0</version>
+                <executions>
+                    <execution>
+                        <phase>package</phase>
+                        <goals><goal>shade</goal></goals>
+                        <configuration>
+                            <createDependencyReducedPom>false</createDependencyReducedPom>
+                            <transformers>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                                    <mainClass>financetracker.Main</mainClass>
+                                </transformer>
+                            </transformers>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>
+
+
+================================================================================
+FILE: src\main\java\financetracker\ChartService.java
+================================================================================
+package financetracker;
+
+import org.jfree.chart.*;
+import org.jfree.chart.axis.NumberAxis;
+import org.jfree.chart.labels.StandardPieSectionLabelGenerator;
+import org.jfree.chart.plot.*;
+import org.jfree.data.category.DefaultCategoryDataset;
+import org.jfree.data.general.DefaultPieDataset;
+import java.time.YearMonth;
+import java.util.List;
+import java.util.Map;
+import java.awt.Color;
+import java.awt.Font;
+
+/** Builds the pie, bar, and line charts used by the reports tab. */
+public class ChartService {
+    /** Creates a spending-by-category pie chart. */
+    public JFreeChart createPieChart(Map<String, Long> totals) {
+        DefaultPieDataset<String> dataset = new DefaultPieDataset<>();
+        totals.forEach(dataset::setValue);
+        JFreeChart chart = ChartFactory.createPieChart("Spending by Category", dataset, true, true, false);
+        chart.setBackgroundPaint(Color.WHITE);
+        PiePlot<?> plot = (PiePlot<?>) chart.getPlot(); plot.setBackgroundPaint(Color.WHITE); plot.setOutlineVisible(false);
+        plot.setLabelGenerator(new StandardPieSectionLabelGenerator("{0}: ₹{1}"));
+        return chart;
+    }
+
+    /** Creates a monthly income versus expense bar chart. */
+    public JFreeChart createBarChart(Map<YearMonth, long[]> monthly) {
+        DefaultCategoryDataset dataset = new DefaultCategoryDataset();
+        monthly.forEach((month, values) -> { dataset.addValue(values[0], "Income", month.toString()); dataset.addValue(values[1], "Expense", month.toString()); });
+        JFreeChart chart = ChartFactory.createBarChart("Monthly Income vs Expense", "Month", "Amount (₹)", dataset);
+        chart.setBackgroundPaint(Color.WHITE); CategoryPlot plot = (CategoryPlot) chart.getPlot(); plot.setBackgroundPaint(Color.WHITE); plot.setOutlineVisible(false);
+        plot.getRangeAxis().setLabelFont(new Font("Segoe UI", Font.PLAIN, 12)); plot.getRenderer().setSeriesPaint(0, Theme.INCOME); plot.getRenderer().setSeriesPaint(1, Theme.EXPENSE);
+        return chart;
+    }
+
+    /** Creates a line chart showing balance trend by month. */
+    public JFreeChart createLineChart(Map<YearMonth, long[]> monthly) {
+        DefaultCategoryDataset dataset = new DefaultCategoryDataset();
+        long balance = 0;
+        for (Map.Entry<YearMonth, long[]> entry : monthly.entrySet()) {
+            balance += entry.getValue()[0] - entry.getValue()[1];
+            dataset.addValue(balance, "Balance", entry.getKey().toString());
+        }
+        JFreeChart chart = ChartFactory.createLineChart("Balance Trend", "Month", "Amount (₹)", dataset);
+        chart.setBackgroundPaint(Color.WHITE); CategoryPlot plot = (CategoryPlot) chart.getPlot(); plot.setBackgroundPaint(Color.WHITE); plot.setOutlineVisible(false); plot.getRenderer().setSeriesPaint(0, Theme.ACCENT);
+        return chart;
+    }
+}
+
+
+================================================================================
+FILE: src\main\java\financetracker\CsvExporter.java
+================================================================================
+package financetracker;
+
+import java.io.*;
+import java.nio.charset.StandardCharsets;
+import java.util.List;
+
+/** Exports transactions and summaries as UTF-8 CSV files. */
+public final class CsvExporter {
+    private CsvExporter() { }
+
+    /** Writes transaction records to a CSV file. */
+    public static void exportTransactions(File file, List<Transaction> transactions) throws IOException {
+        try (Writer writer = new OutputStreamWriter(new FileOutputStream(file), StandardCharsets.UTF_8)) {
+            writer.write("Date,Type,Category,Amount (INR),Description\n");
+            for (Transaction t : transactions) writer.write(String.join(",", csv(t.getDate().toString()), csv(t.getType()),
+                    csv(t.getCategory()), Long.toString(t.getAmount()), csv(t.getDescription())) + "\n");
+        }
+    }
+
+    /** Writes a monthly summary to a CSV file. */
+    public static void exportSummary(File file, String month, long income, long expense, long balance,
+                                     List<String[]> categoryRows, List<String[]> monthlyRows) throws IOException {
+        try (Writer writer = new OutputStreamWriter(new FileOutputStream(file), StandardCharsets.UTF_8)) {
+            writer.write("Month," + csv(month) + "\nIncome," + income + "\nExpense," + expense + "\nBalance," + balance + "\n\n");
+            writer.write("Category,Amount (INR)\n");
+            for (String[] row : categoryRows) writer.write(csv(row[0]) + "," + row[1] + "\n");
+            writer.write("\nMonth,Income (INR),Expense (INR),Balance (INR)\n");
+            for (String[] row : monthlyRows) writer.write(csv(row[0]) + "," + row[1] + "," + row[2] + "," + row[3] + "\n");
+        }
+    }
+
+    private static String csv(String value) { return "\"" + value.replace("\"", "\"\"") + "\""; }
+}
+
+
+================================================================================
+FILE: src\main\java\financetracker\CurrencyUtil.java
+================================================================================
+package financetracker;
+
+import java.text.DecimalFormat;
+import java.text.DecimalFormatSymbols;
+import java.util.Locale;
+
+/** Formats whole Indian Rupee amounts consistently. */
+public final class CurrencyUtil {
+    private CurrencyUtil() { }
+
+    /** Formats a signed amount using Indian digit grouping. */
+    public static String formatINR(long amount) {
+        boolean negative = amount < 0;
+        String digits = Long.toString(Math.abs(amount));
+        if (digits.length() <= 3) return (negative ? "-₹" : "₹") + digits;
+        String last = digits.substring(digits.length() - 3);
+        String prefix = digits.substring(0, digits.length() - 3);
+        StringBuilder grouped = new StringBuilder();
+        while (prefix.length() > 2) {
+            grouped.insert(0, "," + prefix.substring(prefix.length() - 2));
+            prefix = prefix.substring(0, prefix.length() - 2);
+        }
+        grouped.insert(0, prefix);
+        return (negative ? "-₹" : "₹") + grouped + "," + last;
+    }
+
+    /** Returns an amount formatted without a currency symbol for chart values. */
+    public static String formatNumber(long amount) {
+        DecimalFormat format = new DecimalFormat("#,##0", DecimalFormatSymbols.getInstance(Locale.US));
+        return format.format(amount);
+    }
+}
+
+
+================================================================================
+FILE: src\main\java\financetracker\DashboardPanel.java
+================================================================================
+package financetracker;
+
+import javax.swing.*;
+import java.awt.*;
+import java.time.YearMonth;
+import java.time.LocalDate;
+import java.util.List;
+import java.util.Map;
+
+/** Modern dashboard with summary cards, spending bars, and recent activity. */
+public class DashboardPanel extends JPanel {
+    private final MainFrame frame;
+    private final JPanel cards = new JPanel(new GridLayout(2, 3, 16, 16));
+    private final JPanel categories = new JPanel();
+    private final JPanel recent = new JPanel();
+
+    /** Creates the dashboard. */
+    public DashboardPanel(MainFrame frame) {
+        this.frame = frame; setLayout(new BorderLayout(16, 16)); setBackground(Theme.CONTENT);
+        JPanel page = new JPanel(new BorderLayout(0, 18)); page.setOpaque(false); page.setBorder(BorderFactory.createEmptyBorder(24, 24, 24, 24));
+        page.add(header("Welcome back", "Here is your personal finance overview for " + LocalDate.now() + "."), BorderLayout.NORTH);
+        cards.setOpaque(false); page.add(cards, BorderLayout.CENTER);
+        JPanel lower = new JPanel(new GridLayout(1, 2, 16, 16)); lower.setOpaque(false);
+        lower.add(section("Top 3 Spending Categories", categories)); lower.add(section("Recent Transactions", recent)); page.add(lower, BorderLayout.SOUTH);
+        add(page);
+    }
+
+    /** Refreshes dashboard content. */
+    public void refresh(List<Transaction> transactions) {
+        cards.removeAll();
+        long income = frame.reportService().totalIncome(transactions), expense = frame.reportService().totalExpense(transactions);
+        List<Transaction> month = transactions.stream().filter(t -> YearMonth.from(t.getDate()).equals(YearMonth.now())).toList();
+        card("↗", "Total Income", CurrencyUtil.formatINR(income), Theme.INCOME);
+        card("↘", "Total Expense", CurrencyUtil.formatINR(expense), Theme.EXPENSE);
+        card("=", "Net Balance", CurrencyUtil.formatINR(income - expense), Theme.ACCENT);
+        card("◷", "This Month Income", CurrencyUtil.formatINR(frame.reportService().totalIncome(month)), Theme.INCOME);
+        card("◷", "This Month Expense", CurrencyUtil.formatINR(frame.reportService().totalExpense(month)), Theme.EXPENSE);
+        card("#", "Transactions", Integer.toString(transactions.size()), Theme.ACCENT);
+        categories.removeAll(); categories.setLayout(new BoxLayout(categories, BoxLayout.Y_AXIS));
+        Map<String, Long> totals = frame.reportService().categoryTotals(transactions);
+        long maximum = totals.values().stream().mapToLong(Long::longValue).max().orElse(1);
+        for (Map.Entry<String, Long> entry : frame.reportService().topThreeCategories(transactions)) {
+            JPanel row = new JPanel(new BorderLayout(8, 3)); row.setOpaque(false);
+            JLabel label = new JLabel(entry.getKey() + "  " + CurrencyUtil.formatINR(entry.getValue())); label.setFont(Theme.BODY);
+            JProgressBar bar = new JProgressBar(0, 100); bar.setValue((int) (entry.getValue() * 100 / maximum)); bar.setForeground(Theme.ACCENT); bar.setStringPainted(false);
+            row.add(label, BorderLayout.NORTH); row.add(bar, BorderLayout.CENTER); categories.add(row); categories.add(Box.createVerticalStrut(8));
+        }
+        if (totals.isEmpty()) categories.add(empty("◌  No expense data yet."));
+        recent.removeAll(); recent.setLayout(new BoxLayout(recent, BoxLayout.Y_AXIS));
+        transactions.stream().limit(5).forEach(t -> { JLabel item = new JLabel(t.getDate() + "   " + t.getCategory() + "   " + CurrencyUtil.formatINR(t.getAmount())); item.setFont(Theme.BODY); item.setBorder(BorderFactory.createEmptyBorder(5, 0, 5, 0)); recent.add(item); });
+        if (transactions.isEmpty()) recent.add(empty("◌  No transactions yet."));
+        cards.revalidate(); cards.repaint(); categories.revalidate(); recent.revalidate();
+    }
+
+    private void card(String icon, String title, String value, Color color) {
+        RoundedPanel card = new RoundedPanel(new BorderLayout(8, 4));
+        JLabel iconLabel = new JLabel(icon); iconLabel.setForeground(color); iconLabel.setFont(new Font("Segoe UI", Font.BOLD, 22));
+        JLabel titleLabel = new JLabel(title); titleLabel.setForeground(Theme.MUTED); titleLabel.setFont(Theme.BODY);
+        JLabel valueLabel = new JLabel(value); valueLabel.setForeground(Theme.TEXT); valueLabel.setFont(Theme.VALUE);
+        card.add(iconLabel, BorderLayout.WEST); JPanel text = new JPanel(new GridLayout(2, 1)); text.setOpaque(false); text.add(titleLabel); text.add(valueLabel); card.add(text);
+        cards.add(card);
+    }
+
+    private JPanel section(String title, JPanel body) { RoundedPanel card = new RoundedPanel(new BorderLayout(0, 12)); JLabel heading = new JLabel(title); heading.setFont(Theme.BOLD); card.add(heading, BorderLayout.NORTH); card.add(body); return card; }
+    private JLabel header(String title, String subtitle) { JLabel label = new JLabel("<html><font size='6'>" + title + "</font><br><font color='#6B7280'>" + subtitle + "</font></html>"); label.setFont(Theme.TITLE); return label; }
+    private JLabel empty(String text) { JLabel label = new JLabel(text); label.setForeground(Theme.MUTED); return label; }
+}
+
+
+================================================================================
+FILE: src\main\java\financetracker\Database.java
+================================================================================
+package financetracker;
+
+import java.sql.*;
+import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.List;
+
+/** Provides SQLite persistence with prepared statements for every query. */
+public class Database {
+    private static final String URL = "jdbc:sqlite:finance.db";
+
+    /** Opens the database and creates its table when needed. */
+    public Database() throws SQLException {
+        try (Connection connection = connect(); Statement statement = connection.createStatement()) {
+            statement.executeUpdate("""
+                    CREATE TABLE IF NOT EXISTS transactions (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        date TEXT NOT NULL,
+                        type TEXT NOT NULL CHECK(type IN ('Income','Expense')),
+                        category TEXT NOT NULL,
+                        amount INTEGER NOT NULL CHECK(amount > 0),
+                        description TEXT
+                    )
+                    """);
+        }
+    }
+
+    private Connection connect() throws SQLException {
+        return DriverManager.getConnection(URL);
+    }
+
+    /** Inserts a transaction and returns its generated id. */
+    public long add(Transaction transaction) throws SQLException {
+        String sql = "INSERT INTO transactions(date,type,category,amount,description) VALUES(?,?,?,?,?)";
+        try (Connection connection = connect(); PreparedStatement ps = connection.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS)) {
+            bind(ps, transaction);
+            ps.executeUpdate();
+            try (ResultSet keys = ps.getGeneratedKeys()) {
+                if (keys.next()) return keys.getLong(1);
+            }
+        }
+        throw new SQLException("The database did not return a transaction id.");
+    }
+
+    /** Updates an existing transaction. */
+    public void update(Transaction transaction) throws SQLException {
+        String sql = "UPDATE transactions SET date=?,type=?,category=?,amount=?,description=? WHERE id=?";
+        try (Connection connection = connect(); PreparedStatement ps = connection.prepareStatement(sql)) {
+            bind(ps, transaction);
+            ps.setLong(6, transaction.getId());
+            ps.executeUpdate();
+        }
+    }
+
+    /** Deletes a transaction by id. */
+    public void delete(long id) throws SQLException {
+        try (Connection connection = connect(); PreparedStatement ps = connection.prepareStatement("DELETE FROM transactions WHERE id=?")) {
+            ps.setLong(1, id);
+            ps.executeUpdate();
+        }
+    }
+
+    /** Queries transactions using optional inclusive date, category, and type filters. */
+    public List<Transaction> query(LocalDate from, LocalDate to, String category, String type) throws SQLException {
+        StringBuilder sql = new StringBuilder("SELECT id,date,type,category,amount,description FROM transactions WHERE 1=1");
+        List<Object> parameters = new ArrayList<>();
+        if (from != null) { sql.append(" AND date >= ?"); parameters.add(from.toString()); }
+        if (to != null) { sql.append(" AND date <= ?"); parameters.add(to.toString()); }
+        if (category != null && !category.isBlank() && !"All".equals(category)) { sql.append(" AND category = ?"); parameters.add(category); }
+        if (type != null && !type.isBlank() && !"All".equals(type)) { sql.append(" AND type = ?"); parameters.add(type); }
+        sql.append(" ORDER BY date DESC, id DESC");
+        try (Connection connection = connect(); PreparedStatement ps = connection.prepareStatement(sql.toString())) {
+            for (int i = 0; i < parameters.size(); i++) ps.setObject(i + 1, parameters.get(i));
+            try (ResultSet rs = ps.executeQuery()) {
+                List<Transaction> result = new ArrayList<>();
+                while (rs.next()) result.add(read(rs));
+                return result;
+            }
+        }
+    }
+
+    /** Queries all transactions. */
+    public List<Transaction> all() throws SQLException { return query(null, null, "All", "All"); }
+
+    private void bind(PreparedStatement ps, Transaction t) throws SQLException {
+        ps.setString(1, t.getDate().toString());
+        ps.setString(2, t.getType());
+        ps.setString(3, t.getCategory());
+        ps.setLong(4, t.getAmount());
+        ps.setString(5, t.getDescription());
+    }
+
+    private Transaction read(ResultSet rs) throws SQLException {
+        return new Transaction(rs.getLong("id"), LocalDate.parse(rs.getString("date")), rs.getString("type"),
+                rs.getString("category"), rs.getLong("amount"), rs.getString("description"));
+    }
+}
+
+
+================================================================================
+FILE: src\main\java\financetracker\ExportPanel.java
+================================================================================
+package financetracker;
+
+import javax.swing.*;
+import java.awt.*;
+import java.io.File;
+import java.util.List;
+
+/** Tab for exporting filtered transactions or the current monthly report. */
+public class ExportPanel extends JPanel {
+    private final MainFrame frame;
+    private final JComboBox<String> type = new JComboBox<>(new String[]{"All","Income","Expense"});
+    private final JComboBox<String> category = new JComboBox<>(new String[]{"All","Food","Travel","Rent","Bills","Shopping","Health","Entertainment","Education","Salary","Other"});
+    private final JTextField from = new JTextField(10), to = new JTextField(10);
+
+    /** Creates the export controls. */
+    public ExportPanel(MainFrame frame) {
+        this.frame = frame; setLayout(new GridBagLayout()); setBackground(Theme.CONTENT); setBorder(BorderFactory.createEmptyBorder(24, 24, 24, 24));
+        RoundedPanel card = new RoundedPanel(new GridBagLayout()); GridBagConstraints c = new GridBagConstraints(); c.insets = new Insets(8, 8, 8, 8); c.fill = GridBagConstraints.HORIZONTAL; c.weightx = 1;
+        JLabel heading = new JLabel("<html><font size='6'>Export</font><br><font color='#6B7280'>Download your filtered data for backup or analysis.</font></html>"); c.gridx = 0; c.gridy = 0; c.gridwidth = 2; card.add(heading, c);
+        c.gridy++; c.gridwidth = 1; card.add(new JLabel("From"), c); c.gridx = 1; card.add(from, c); c.gridx = 0; c.gridy++; card.add(new JLabel("To"), c); c.gridx = 1; card.add(to, c); c.gridx = 0; c.gridy++; card.add(new JLabel("Category"), c); c.gridx = 1; card.add(category, c); c.gridx = 0; c.gridy++; card.add(new JLabel("Type"), c); c.gridx = 1; card.add(type, c);
+        JButton transactions = new JButton("Export Transactions (CSV)"), summary = new JButton("Export Monthly Summary (CSV)"); Theme.primary(transactions); Theme.secondary(summary); c.gridx = 0; c.gridy++; card.add(transactions, c); c.gridx = 1; card.add(summary, c); add(card);
+        transactions.addActionListener(e -> exportTransactions()); summary.addActionListener(e -> exportSummary());
+    }
+
+    /** Refreshes export controls after data changes. */
+    public void refresh() { }
+
+    private List<Transaction> filtered() throws Exception {
+        return frame.database().query(from.getText().isBlank() ? null : Validator.parseDate(from.getText()), to.getText().isBlank() ? null : Validator.parseDate(to.getText()), (String) category.getSelectedItem(), (String) type.getSelectedItem());
+    }
+
+    private void exportTransactions() {
+        try { File file = choose("transactions.csv"); if (file != null) CsvExporter.exportTransactions(file, filtered()); }
+        catch (Exception ex) { frame.showError(ex); }
+    }
+
+    private void exportSummary() {
+        try {
+            File file = choose("monthly-summary.csv"); if (file == null) return; List<Transaction> rows = filtered(); var service = frame.reportService();
+            java.util.Map<java.time.YearMonth, long[]> months = service.monthlySummary(rows); java.util.List<String[]> monthlyRows = new java.util.ArrayList<>();
+            months.forEach((m, values) -> monthlyRows.add(new String[]{m.toString(), Long.toString(values[0]), Long.toString(values[1]), Long.toString(values[0] - values[1])}));
+            java.util.List<String[]> categoryRows = service.categoryTotals(rows).entrySet().stream().map(e -> new String[]{e.getKey(), Long.toString(e.getValue())}).toList();
+            CsvExporter.exportSummary(file, "Filtered data", service.totalIncome(rows), service.totalExpense(rows), service.balance(rows), categoryRows, monthlyRows);
+        } catch (Exception ex) { frame.showError(ex); }
+    }
+
+    private File choose(String name) {
+        JFileChooser chooser = new JFileChooser(); chooser.setSelectedFile(new File(name));
+        return chooser.showSaveDialog(frame) == JFileChooser.APPROVE_OPTION ? chooser.getSelectedFile() : null;
+    }
+}
+
+
+================================================================================
+FILE: src\main\java\financetracker\Main.java
+================================================================================
+package financetracker;
+
+import com.formdev.flatlaf.FlatLightLaf;
+import javax.swing.*;
+
+/** Application entry point that starts the Swing interface on the EDT. */
+public final class Main {
+    private Main() { }
+
+    /** Starts the application. */
+    public static void main(String[] args) {
+        FlatLightLaf.setup();
+        SwingUtilities.invokeLater(() -> {
+            try {
+                new MainFrame().setVisible(true);
+            } catch (Exception ex) {
+                JOptionPane.showMessageDialog(null, "Unable to start the application:\n" + ex.getMessage(),
+                        "Startup error", JOptionPane.ERROR_MESSAGE);
+            }
+        });
+    }
+}
+
+
+================================================================================
+FILE: src\main\java\financetracker\MainFrame.java
+================================================================================
+package financetracker;
+
+import javax.swing.*;
+import java.awt.*;
+import java.sql.SQLException;
+import java.util.List;
+import java.util.LinkedHashMap;
+import java.util.Map;
+
+/** Main application window and refresh coordinator for all tabs. */
+public class MainFrame extends JFrame {
+    private final Database database;
+    private final ReportService reports = new ReportService();
+    private final DashboardPanel dashboard;
+    private final TransactionFormPanel form;
+    private final ManagePanel manage;
+    private final SummaryPanel summary;
+    private final ReportsPanel charts;
+    private final ExportPanel export;
+    private final JPanel content = new JPanel(new CardLayout());
+    private final Map<String, JButton> navigation = new LinkedHashMap<>();
+    private final JLabel status = new JLabel(" ");
+
+    /** Creates the database and all application tabs. */
+    public MainFrame() throws SQLException {
+        super("FinTrack - Smart Personal Finance");
+        database = new Database();
+        Theme.install();
+        setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+        setSize(1100, 720);
+        setMinimumSize(new Dimension(1100, 700));
+        setLocationRelativeTo(null);
+        dashboard = new DashboardPanel(this);
+        form = new TransactionFormPanel(this);
+        manage = new ManagePanel(this);
+        summary = new SummaryPanel(this);
+        charts = new ReportsPanel(this);
+        export = new ExportPanel(this);
+        content.add(dashboard, "Dashboard"); content.add(form, "Add Transaction");
+        content.add(manage, "Manage Transactions"); content.add(summary, "Monthly Summary");
+        content.add(charts, "Visual Reports"); content.add(export, "Export");
+        add(createSidebar(), BorderLayout.WEST); add(content, BorderLayout.CENTER);
+        refreshAll();
+        showPage("Dashboard");
+    }
+
+    /** Returns the shared database. */
+    public Database database() { return database; }
+    /** Returns the shared reporting service. */
+    public ReportService reportService() { return reports; }
+
+    /** Refreshes every view after a data change. */
+    public void refreshAll() {
+        try {
+            List<Transaction> transactions = database.all();
+            dashboard.refresh(transactions);
+            manage.refresh();
+            summary.refresh();
+            charts.refresh(transactions);
+            export.refresh();
+        } catch (SQLException ex) {
+            showError(ex);
+        }
+    }
+
+    /** Displays a consistent database error dialog. */
+    public void showError(Exception ex) {
+        JOptionPane.showMessageDialog(this, ex.getMessage(), "Database error", JOptionPane.ERROR_MESSAGE);
+    }
+
+    /** Shows a form validation error. */
+    public void showValidation(String message) {
+        JOptionPane.showMessageDialog(this, message, "Please check your input", JOptionPane.WARNING_MESSAGE);
+    }
+
+    /** Shows a page selected from the sidebar. */
+    public void showPage(String page) {
+        ((CardLayout) content.getLayout()).show(content, page);
+        for (Map.Entry<String, JButton> entry : navigation.entrySet()) {
+            entry.getValue().setBackground(entry.getKey().equals(page) ? Theme.ACCENT : Theme.SIDEBAR);
+            entry.getValue().setForeground(entry.getKey().equals(page) ? Color.WHITE : Theme.TEXT);
+        }
+    }
+
+    /** Shows a non-blocking success message in the content shell. */
+    public void showSuccess(String message) { status.setText(message); status.setForeground(Theme.INCOME); }
+
+    private JPanel createSidebar() {
+        JPanel sidebar = new JPanel(new BorderLayout(0, 12));
+        sidebar.setBackground(Theme.SIDEBAR); sidebar.setPreferredSize(new Dimension(230, 0));
+        sidebar.setBorder(BorderFactory.createMatteBorder(0, 0, 0, 1, Theme.BORDER));
+        JPanel top = new JPanel(); top.setOpaque(false); top.setLayout(new BoxLayout(top, BoxLayout.Y_AXIS));
+        JLabel logo = new JLabel("  FinTrack"); logo.setFont(new Font("Segoe UI", Font.BOLD, 25)); logo.setForeground(Theme.ACCENT);
+        JLabel tagline = new JLabel("  Smart Personal Finance"); tagline.setFont(new Font("Segoe UI", Font.PLAIN, 11)); tagline.setForeground(Theme.MUTED);
+        top.add(Box.createVerticalStrut(24)); top.add(logo); top.add(tagline); top.add(Box.createVerticalStrut(28));
+        String[] pages = {"Dashboard", "Add Transaction", "Manage Transactions", "Monthly Summary", "Visual Reports", "Export"};
+        String[] icons = {"⌂", "+", "▤", "▥", "◔", "⇧"};
+        for (int i = 0; i < pages.length; i++) {
+            JButton item = new JButton(icons[i] + "   " + pages[i]); item.setHorizontalAlignment(SwingConstants.LEFT);
+            item.setFont(Theme.BODY); item.setFocusPainted(false); item.setBorder(BorderFactory.createEmptyBorder(11, 18, 11, 10));
+            item.setOpaque(true); item.setBackground(Theme.SIDEBAR); item.setForeground(Theme.TEXT);
+            final String page = pages[i]; item.addActionListener(e -> showPage(page)); navigation.put(page, item); top.add(item);
+        }
+        sidebar.add(top, BorderLayout.NORTH);
+        JPanel bottom = new JPanel(); bottom.setOpaque(false); bottom.setLayout(new BoxLayout(bottom, BoxLayout.Y_AXIS));
+        JButton seed = new JButton("＋  Load Sample Data"); Theme.secondary(seed); seed.setAlignmentX(Component.CENTER_ALIGNMENT);
+        seed.addActionListener(e -> { try { SeedData.load(database); refreshAll(); showSuccess("Sample data loaded successfully."); } catch (Exception ex) { showError(ex); } });
+        JLabel version = new JLabel("v1.0"); version.setForeground(Theme.MUTED); version.setAlignmentX(Component.CENTER_ALIGNMENT);
+        bottom.add(seed); bottom.add(Box.createVerticalStrut(12)); bottom.add(version); bottom.add(Box.createVerticalStrut(18)); sidebar.add(bottom, BorderLayout.SOUTH);
+        return sidebar;
+    }
+}
+
+
+================================================================================
+FILE: src\main\java\financetracker\ManagePanel.java
+================================================================================
+package financetracker;
+
+import javax.swing.*;
+import javax.swing.table.DefaultTableModel;
+import javax.swing.table.DefaultTableCellRenderer;
+import java.awt.*;
+import java.time.LocalDate;
+import java.util.List;
+
+/** Tab for browsing, filtering, editing, and deleting transactions. */
+public class ManagePanel extends JPanel {
+    private final MainFrame frame;
+    private final JTextField from = new JTextField(10), to = new JTextField(10);
+    private final JComboBox<String> category = new JComboBox<>(new String[]{"All","Food","Travel","Rent","Bills","Shopping","Health","Entertainment","Education","Salary","Other"});
+    private final JComboBox<String> type = new JComboBox<>(new String[]{"All","Income","Expense"});
+    private final DefaultTableModel model = new DefaultTableModel(new String[]{"ID","Date","Type","Category","Amount","Description"}, 0) { public boolean isCellEditable(int r, int c) { return false; } };
+    private final JTable table = new JTable(model);
+
+    /** Creates the management panel. */
+    public ManagePanel(MainFrame frame) {
+        this.frame = frame; setLayout(new BorderLayout(16, 16)); setBackground(Theme.CONTENT); setBorder(BorderFactory.createEmptyBorder(24, 24, 24, 24)); JPanel filters = new JPanel();
+        filters.setBackground(Color.WHITE); filters.setBorder(BorderFactory.createEmptyBorder(12, 14, 12, 14));
+        filters.add(new JLabel("From")); filters.add(from); filters.add(new JLabel("To")); filters.add(to); filters.add(new JLabel("Category")); filters.add(category); filters.add(new JLabel("Type")); filters.add(type);
+        JButton apply = new JButton("Apply Filters"), edit = new JButton("Edit"), delete = new JButton("Delete"); Theme.primary(apply); Theme.secondary(edit); delete.setBackground(Theme.EXPENSE); delete.setForeground(Color.WHITE); Theme.secondary(delete); filters.add(apply); filters.add(edit); filters.add(delete);
+        apply.addActionListener(e -> refresh()); edit.addActionListener(e -> editSelected()); delete.addActionListener(e -> deleteSelected());
+        Theme.table(table); table.getColumnModel().getColumn(4).setCellRenderer(new AmountRenderer());
+        add(filters, BorderLayout.NORTH); JScrollPane scroll = new JScrollPane(table); scroll.setBorder(BorderFactory.createEmptyBorder()); add(scroll, BorderLayout.CENTER);
+    }
+
+    /** Refreshes the table using the selected filters. */
+    public void refresh() {
+        try {
+            LocalDate start = from.getText().isBlank() ? null : Validator.parseDate(from.getText());
+            LocalDate end = to.getText().isBlank() ? null : Validator.parseDate(to.getText());
+            if (start != null && end != null && start.isAfter(end)) throw new IllegalArgumentException("From date must not be after To date.");
+            model.setRowCount(0); for (Transaction t : frame.database().query(start, end, (String) category.getSelectedItem(), (String) type.getSelectedItem()))
+                model.addRow(new Object[]{t.getId(), t.getDate(), t.getType(), t.getCategory(), CurrencyUtil.formatINR(t.getAmount()), t.getDescription()});
+        } catch (IllegalArgumentException ex) { frame.showValidation(ex.getMessage()); } catch (Exception ex) { frame.showError(ex); }
+    }
+
+    private void deleteSelected() {
+        int row = table.getSelectedRow(); if (row < 0) { frame.showValidation("Select a transaction first."); return; }
+        if (JOptionPane.showConfirmDialog(frame, "Delete the selected transaction?", "Confirm delete", JOptionPane.YES_NO_OPTION) == JOptionPane.YES_OPTION)
+            try { frame.database().delete((Long) model.getValueAt(row, 0)); frame.refreshAll(); } catch (Exception ex) { frame.showError(ex); }
+    }
+
+    private void editSelected() {
+        int row = table.getSelectedRow(); if (row < 0) { frame.showValidation("Select a transaction first."); return; }
+        try {
+            long id = (Long) model.getValueAt(row, 0); JTextField date = new JTextField(model.getValueAt(row, 1).toString());
+            JComboBox<String> typeBox = new JComboBox<>(new String[]{"Income","Expense"}); typeBox.setSelectedItem(model.getValueAt(row, 2));
+            JTextField cat = new JTextField(model.getValueAt(row, 3).toString()), amount = new JTextField(model.getValueAt(row, 4).toString().replace("₹","").replace(",",""));
+            JTextField desc = new JTextField(model.getValueAt(row, 5).toString()); JPanel p = new JPanel(new GridLayout(0, 2, 5, 5));
+            p.add(new JLabel("Date")); p.add(date); p.add(new JLabel("Type")); p.add(typeBox); p.add(new JLabel("Category")); p.add(cat); p.add(new JLabel("Amount")); p.add(amount); p.add(new JLabel("Description")); p.add(desc);
+            if (JOptionPane.showConfirmDialog(frame, p, "Edit transaction", JOptionPane.OK_CANCEL_OPTION) == JOptionPane.OK_OPTION) {
+                LocalDate parsed = Validator.parseDate(date.getText()); Validator.validateTransaction(parsed, (String) typeBox.getSelectedItem(), cat.getText());
+                frame.database().update(new Transaction(id, parsed, (String) typeBox.getSelectedItem(), cat.getText().trim(), Validator.parseAmount(amount.getText()), desc.getText().trim())); frame.refreshAll();
+            }
+        } catch (IllegalArgumentException ex) { frame.showValidation(ex.getMessage()); } catch (Exception ex) { frame.showError(ex); }
+    }
+
+    /** Colors the formatted amount according to the transaction type. */
+    private static class AmountRenderer extends DefaultTableCellRenderer {
+        /** Renders one amount cell with income or expense color. */
+        @Override public Component getTableCellRendererComponent(JTable table, Object value, boolean selected, boolean focused, int row, int column) {
+            Component component = super.getTableCellRendererComponent(table, value, selected, focused, row, column);
+            component.setForeground(selected ? Color.WHITE : "Income".equals(table.getValueAt(row, 2)) ? Theme.INCOME : Theme.EXPENSE);
+            return component;
+        }
+    }
+}
+
+
+================================================================================
+FILE: src\main\java\financetracker\ReportService.java
+================================================================================
+package financetracker;
+
+import java.time.YearMonth;
+import java.util.*;
+import java.util.stream.Collectors;
+
+/** Calculates dashboard and report summaries from transactions. */
+public class ReportService {
+    /** Sums income for a list. */
+    public long totalIncome(List<Transaction> transactions) { return totalByType(transactions, "Income"); }
+    /** Sums expenses for a list. */
+    public long totalExpense(List<Transaction> transactions) { return totalByType(transactions, "Expense"); }
+    /** Returns income minus expense. */
+    public long balance(List<Transaction> transactions) { return totalIncome(transactions) - totalExpense(transactions); }
+    /** Returns totals by category for expenses. */
+    public Map<String, Long> categoryTotals(List<Transaction> transactions) {
+        return transactions.stream().filter(t -> "Expense".equals(t.getType()))
+                .collect(Collectors.groupingBy(Transaction::getCategory, TreeMap::new, Collectors.summingLong(Transaction::getAmount)));
+    }
+    /** Returns the three largest spending categories. */
+    public List<Map.Entry<String, Long>> topThreeCategories(List<Transaction> transactions) {
+        return categoryTotals(transactions).entrySet().stream().sorted(Map.Entry.<String, Long>comparingByValue().reversed()).limit(3).toList();
+    }
+    /** Returns totals grouped by calendar month. */
+    public Map<YearMonth, long[]> monthlySummary(List<Transaction> transactions) {
+        Map<YearMonth, long[]> result = new TreeMap<>();
+        for (Transaction t : transactions) {
+            long[] totals = result.computeIfAbsent(YearMonth.from(t.getDate()), ignored -> new long[2]);
+            totals["Income".equals(t.getType()) ? 0 : 1] += t.getAmount();
+        }
+        return result;
+    }
+    /** Returns totals by type. */
+    private long totalByType(List<Transaction> transactions, String type) {
+        return transactions.stream().filter(t -> type.equals(t.getType())).mapToLong(Transaction::getAmount).sum();
+    }
+}
+
+
+================================================================================
+FILE: src\main\java\financetracker\ReportsPanel.java
+================================================================================
+package financetracker;
+
+import org.jfree.chart.ChartPanel;
+import javax.swing.*;
+import java.awt.*;
+import java.time.LocalDate;
+import java.util.List;
+
+/** Tab containing pie, bar, and line visual reports. */
+public class ReportsPanel extends JPanel {
+    private final MainFrame frame;
+    private final JPanel charts = new JPanel(new GridLayout(1, 3, 16, 16));
+    private final JTextField from = new JTextField(10), to = new JTextField(10);
+    private final JComboBox<String> category = new JComboBox<>(new String[]{"All","Food","Travel","Rent","Bills","Shopping","Health","Entertainment","Education","Salary","Other"});
+    private final JComboBox<String> type = new JComboBox<>(new String[]{"All","Income","Expense"});
+
+    /** Creates the reports panel. */
+    public ReportsPanel(MainFrame frame) {
+        this.frame = frame; setLayout(new BorderLayout(16, 16)); setBackground(Theme.CONTENT); setBorder(BorderFactory.createEmptyBorder(24, 24, 24, 24));
+        JPanel filters = new JPanel(); filters.setBackground(Color.WHITE); filters.setBorder(BorderFactory.createEmptyBorder(10, 12, 10, 12)); filters.add(new JLabel("From")); filters.add(from); filters.add(new JLabel("To")); filters.add(to);
+        filters.add(new JLabel("Category")); filters.add(category); filters.add(new JLabel("Type")); filters.add(type);
+        JButton apply = new JButton("Apply Filters"); Theme.primary(apply); filters.add(apply); apply.addActionListener(e -> refreshFromFilters());
+        add(filters, BorderLayout.NORTH); add(charts, BorderLayout.CENTER);
+    }
+
+    /** Rebuilds all charts from the supplied filtered dataset. */
+    public void refresh(List<Transaction> transactions) {
+        ChartService service = new ChartService(); charts.removeAll();
+        charts.setOpaque(false);
+        charts.add(chartCard("Spending", service.createPieChart(frame.reportService().categoryTotals(transactions))));
+        charts.add(chartCard("Monthly", service.createBarChart(frame.reportService().monthlySummary(transactions))));
+        charts.add(chartCard("Balance Trend", service.createLineChart(frame.reportService().monthlySummary(transactions))));
+    }
+
+    private JPanel chartCard(String title, org.jfree.chart.JFreeChart chart) {
+        RoundedPanel card = new RoundedPanel(new BorderLayout());
+        JLabel heading = new JLabel(title); heading.setFont(Theme.BOLD); card.add(heading, BorderLayout.NORTH);
+        ChartPanel chartPanel = new ChartPanel(chart); chartPanel.setBorder(BorderFactory.createEmptyBorder()); card.add(chartPanel, BorderLayout.CENTER);
+        return card;
+    }
+
+    /** Rebuilds charts from this tab's selected filters. */
+    private void refreshFromFilters() {
+        try {
+            LocalDate start = from.getText().isBlank() ? null : Validator.parseDate(from.getText());
+            LocalDate end = to.getText().isBlank() ? null : Validator.parseDate(to.getText());
+            if (start != null && end != null && start.isAfter(end)) throw new IllegalArgumentException("From date must not be after To date.");
+            refresh(frame.database().query(start, end, (String) category.getSelectedItem(), (String) type.getSelectedItem()));
+        } catch (IllegalArgumentException ex) { frame.showValidation(ex.getMessage()); } catch (Exception ex) { frame.showError(ex); }
+    }
+}
+
+
+================================================================================
+FILE: src\main\java\financetracker\RoundedPanel.java
+================================================================================
+package financetracker;
+
+import javax.swing.*;
+import java.awt.*;
+
+/** Reusable white card with a soft border and rounded corners. */
+public class RoundedPanel extends JPanel {
+    private final int radius;
+
+    /** Creates a card with the requested layout and padding. */
+    public RoundedPanel(LayoutManager layout) {
+        super(layout);
+        radius = 16;
+        setOpaque(false);
+        setBorder(BorderFactory.createEmptyBorder(20, 20, 20, 20));
+    }
+
+    /** Paints the card background and border. */
+    @Override protected void paintComponent(Graphics graphics) {
+        Graphics2D g = (Graphics2D) graphics.create();
+        g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+        g.setColor(Color.WHITE);
+        g.fillRoundRect(0, 0, getWidth() - 1, getHeight() - 1, radius, radius);
+        g.setColor(Theme.BORDER);
+        g.drawRoundRect(0, 0, getWidth() - 1, getHeight() - 1, radius, radius);
+        g.dispose();
+        super.paintComponent(graphics);
+    }
+}
+
+
+================================================================================
+FILE: src\main\java\financetracker\SeedData.java
+================================================================================
+package financetracker;
+
+import java.sql.SQLException;
+import java.time.LocalDate;
+import java.util.List;
+
+/** Loads a repeatable set of approximately thirty sample transactions. */
+public final class SeedData {
+    private SeedData() { }
+
+    /** Adds sample data to the database. */
+    public static void load(Database database) throws SQLException {
+        LocalDate today = LocalDate.now();
+        String[][] rows = {
+                {"Income","Salary","75000","Monthly salary"}, {"Expense","Rent","22000","Apartment rent"},
+                {"Expense","Food","1800","Groceries"}, {"Expense","Travel","1200","Metro and taxi"},
+                {"Expense","Bills","2500","Electricity and internet"}, {"Expense","Shopping","3200","Clothes"},
+                {"Expense","Health","900","Pharmacy"}, {"Expense","Entertainment","700","Movie"},
+                {"Expense","Education","1500","Online course"}, {"Income","Other","5000","Freelance work"},
+                {"Expense","Food","2100","Groceries"}, {"Expense","Travel","850","Bus pass"},
+                {"Expense","Bills","1800","Phone bill"}, {"Expense","Shopping","1400","Household items"},
+                {"Expense","Health","600","Doctor visit"}, {"Income","Salary","75000","Monthly salary"},
+                {"Expense","Rent","22000","Apartment rent"}, {"Expense","Food","2300","Groceries"},
+                {"Expense","Travel","1100","Fuel"}, {"Expense","Bills","2700","Utilities"},
+                {"Expense","Entertainment","1200","Concert"}, {"Expense","Education","900","Books"},
+                {"Expense","Shopping","2600","Shoes"}, {"Expense","Health","450","Medicine"},
+                {"Income","Other","3500","Consulting"}, {"Income","Salary","75000","Monthly salary"},
+                {"Expense","Rent","22000","Apartment rent"}, {"Expense","Food","1900","Groceries"},
+                {"Expense","Travel","1300","Train tickets"}, {"Expense","Bills","2300","Utilities"}
+        };
+        for (int i = 0; i < rows.length; i++) {
+            LocalDate month = today.minusMonths(2 - (i / 10));
+            LocalDate date = month.withDayOfMonth(Math.min(5 + (i % 20), month.lengthOfMonth()));
+            database.add(new Transaction(date, rows[i][0], rows[i][1], Long.parseLong(rows[i][2]), rows[i][3]));
+        }
+    }
+
+    /** Runs the seed loader from the command line. */
+    public static void main(String[] args) throws SQLException {
+        SeedData.load(new Database());
+        System.out.println("Sample transactions loaded.");
+    }
+}
+
+
+================================================================================
+FILE: src\main\java\financetracker\SummaryPanel.java
+================================================================================
+package financetracker;
+
+import javax.swing.*;
+import javax.swing.table.DefaultTableModel;
+import java.awt.*;
+import java.time.YearMonth;
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
+
+/** Tab showing a selected month's totals, category breakdown, and monthly history. */
+public class SummaryPanel extends JPanel {
+    private final MainFrame frame;
+    private final JComboBox<String> month = new JComboBox<>(new String[]{"01","02","03","04","05","06","07","08","09","10","11","12"});
+    private final JSpinner year = new JSpinner(new SpinnerNumberModel(java.time.Year.now().getValue(), 2000, 2100, 1));
+    private final JLabel totals = new JLabel();
+    private final DefaultTableModel categories = new DefaultTableModel(new String[]{"Category","Amount"}, 0);
+    private final DefaultTableModel monthly = new DefaultTableModel(new String[]{"Month","Income","Expense","Balance"}, 0);
+
+    /** Creates the summary panel. */
+    public SummaryPanel(MainFrame frame) {
+        this.frame = frame; setLayout(new BorderLayout(16, 16)); setBackground(Theme.CONTENT); setBorder(BorderFactory.createEmptyBorder(24, 24, 24, 24)); JPanel top = new JPanel(); top.setOpaque(false); top.add(new JLabel("Monthly Summary")); top.add(new JLabel("Month")); top.add(month); top.add(new JLabel("Year")); top.add(year);
+        JButton refresh = new JButton("Show Summary"); Theme.primary(refresh); top.add(refresh); refresh.addActionListener(e -> refresh()); add(top, BorderLayout.NORTH);
+        JTable categoryTable = new JTable(categories), monthlyTable = new JTable(monthly); Theme.table(categoryTable); Theme.table(monthlyTable);
+        JPanel center = new JPanel(new GridLayout(1, 2, 16, 16)); center.setOpaque(false); RoundedPanel categoryCard = new RoundedPanel(new BorderLayout()); categoryCard.add(new JScrollPane(categoryTable)); RoundedPanel monthlyCard = new RoundedPanel(new BorderLayout()); monthlyCard.add(new JScrollPane(monthlyTable)); center.add(categoryCard); center.add(monthlyCard); add(center, BorderLayout.CENTER); totals.setFont(Theme.BOLD); add(totals, BorderLayout.SOUTH);
+        month.setSelectedItem(String.format("%02d", java.time.MonthDay.now().getMonthValue()));
+    }
+
+    /** Refreshes the selected month and all month-by-month rows. */
+    public void refresh() {
+        try {
+            List<Transaction> all = frame.database().all(); YearMonth selected = YearMonth.of((Integer) year.getValue(), Integer.parseInt((String) month.getSelectedItem()));
+            List<Transaction> selectedRows = all.stream().filter(t -> YearMonth.from(t.getDate()).equals(selected)).toList();
+            long income = frame.reportService().totalIncome(selectedRows), expense = frame.reportService().totalExpense(selectedRows);
+            totals.setText("  " + selected + " | Income: " + CurrencyUtil.formatINR(income) + "   Expense: " + CurrencyUtil.formatINR(expense) + "   Balance: " + CurrencyUtil.formatINR(income - expense));
+            categories.setRowCount(0); frame.reportService().categoryTotals(selectedRows).forEach((key, value) -> categories.addRow(new Object[]{key, CurrencyUtil.formatINR(value)}));
+            monthly.setRowCount(0); frame.reportService().monthlySummary(all).forEach((key, values) -> monthly.addRow(new Object[]{key, CurrencyUtil.formatINR(values[0]), CurrencyUtil.formatINR(values[1]), CurrencyUtil.formatINR(values[0] - values[1])}));
+        } catch (Exception ex) { frame.showError(ex); }
+    }
+}
+
+
+================================================================================
+FILE: src\main\java\financetracker\Theme.java
+================================================================================
+package financetracker;
+
+import javax.swing.*;
+import javax.swing.border.EmptyBorder;
+import javax.swing.table.JTableHeader;
+import java.awt.*;
+
+/** Central visual language for the FinTrack light theme. */
+public final class Theme {
+    public static final Color CONTENT = Color.decode("#F5F7FB");
+    public static final Color SIDEBAR = Color.WHITE;
+    public static final Color ACCENT = Color.decode("#5B5BD6");
+    public static final Color INCOME = Color.decode("#16A34A");
+    public static final Color EXPENSE = Color.decode("#DC2626");
+    public static final Color TEXT = Color.decode("#1F2937");
+    public static final Color MUTED = Color.decode("#6B7280");
+    public static final Color BORDER = Color.decode("#E5E7EB");
+    public static final Font BODY = new Font("Segoe UI", Font.PLAIN, 14);
+    public static final Font BOLD = new Font("Segoe UI", Font.BOLD, 14);
+    public static final Font TITLE = new Font("Segoe UI", Font.BOLD, 26);
+    public static final Font VALUE = new Font("Segoe UI", Font.BOLD, 22);
+
+    private Theme() { }
+
+    /** Applies global FlatLaf component properties and table defaults. */
+    public static void install() {
+        UIManager.put("Component.arc", 12);
+        UIManager.put("Button.arc", 12);
+        UIManager.put("TextComponent.arc", 10);
+        UIManager.put("Component.focusColor", ACCENT);
+        UIManager.put("TextField.margin", new Insets(8, 12, 8, 12));
+        UIManager.put("ComboBox.padding", new Insets(6, 10, 6, 10));
+        UIManager.put("Table.rowHeight", 34);
+        UIManager.put("Table.showHorizontalLines", false);
+        UIManager.put("Table.showVerticalLines", false);
+        UIManager.put("Table.alternateRowColor", Color.decode("#FAFBFF"));
+        UIManager.put("TableHeader.background", Color.decode("#EEF1F7"));
+        UIManager.put("TableHeader.foreground", TEXT);
+        UIManager.put("TableHeader.font", BOLD);
+    }
+
+    /** Styles a primary action button. */
+    public static void primary(JButton button) {
+        button.putClientProperty("JButton.buttonType", "roundRect");
+        button.setBackground(ACCENT);
+        button.setForeground(Color.WHITE);
+        button.setFont(BOLD);
+        button.setBorder(new EmptyBorder(10, 18, 10, 18));
+    }
+
+    /** Styles a secondary action button. */
+    public static void secondary(JButton button) {
+        button.putClientProperty("JButton.buttonType", "roundRect");
+        button.setFont(BOLD);
+        button.setBorder(new EmptyBorder(9, 15, 9, 15));
+    }
+
+    /** Applies the common table presentation. */
+    public static void table(JTable table) {
+        table.setRowHeight(34);
+        table.setShowGrid(false);
+        table.setIntercellSpacing(new Dimension(0, 0));
+        table.setFont(BODY);
+        JTableHeader header = table.getTableHeader();
+        header.setFont(BOLD);
+        header.setPreferredSize(new Dimension(0, 38));
+    }
+}
+
+
+================================================================================
+FILE: src\main\java\financetracker\Transaction.java
+================================================================================
+package financetracker;
+
+import java.time.LocalDate;
+
+/** Represents one income or expense transaction. */
+public class Transaction {
+    private long id;
+    private LocalDate date;
+    private String type;
+    private String category;
+    private long amount;
+    private String description;
+
+    /** Creates a transaction. */
+    public Transaction(long id, LocalDate date, String type, String category, long amount, String description) {
+        this.id = id;
+        this.date = date;
+        this.type = type;
+        this.category = category;
+        this.amount = amount;
+        this.description = description == null ? "" : description;
+    }
+
+    /** Creates a new unsaved transaction. */
+    public Transaction(LocalDate date, String type, String category, long amount, String description) {
+        this(0, date, type, category, amount, description);
+    }
+
+    /** Returns the database id. */
+    public long getId() { return id; }
+    /** Returns the date. */
+    public LocalDate getDate() { return date; }
+    /** Returns the type. */
+    public String getType() { return type; }
+    /** Returns the category. */
+    public String getCategory() { return category; }
+    /** Returns the amount. */
+    public long getAmount() { return amount; }
+    /** Returns the description. */
+    public String getDescription() { return description; }
+    /** Sets the database id. */
+    public void setId(long id) { this.id = id; }
+    /** Sets the date. */
+    public void setDate(LocalDate date) { this.date = date; }
+    /** Sets the type. */
+    public void setType(String type) { this.type = type; }
+    /** Sets the category. */
+    public void setCategory(String category) { this.category = category; }
+    /** Sets the amount. */
+    public void setAmount(long amount) { this.amount = amount; }
+    /** Sets the description. */
+    public void setDescription(String description) { this.description = description == null ? "" : description; }
+}
+
+
+================================================================================
+FILE: src\main\java\financetracker\TransactionFormPanel.java
+================================================================================
+package financetracker;
+
+import javax.swing.*;
+import java.awt.*;
+import java.time.LocalDate;
+
+/** Modern transaction entry page while preserving existing validation behavior. */
+public class TransactionFormPanel extends JPanel {
+    private final MainFrame frame;
+    private final JTextField date = new JTextField(LocalDate.now().toString());
+    private final JComboBox<String> type = new JComboBox<>(new String[]{"Income", "Expense"});
+    private final JComboBox<String> category = new JComboBox<>(new String[]{"Food","Travel","Rent","Bills","Shopping","Health","Entertainment","Education","Salary","Other"});
+    private final JTextField amount = new JTextField();
+    private final JTextField description = new JTextField();
+    private final JLabel feedback = new JLabel(" ");
+
+    /** Creates the add transaction page. */
+    public TransactionFormPanel(MainFrame frame) {
+        this.frame = frame; setLayout(new GridBagLayout()); setBackground(Theme.CONTENT);
+        RoundedPanel card = new RoundedPanel(new BorderLayout(0, 22)); card.setPreferredSize(new Dimension(700, 500));
+        JLabel heading = new JLabel("<html><font size='6'>Add Transaction</font><br><font color='#6B7280'>Record your income or expenses with ease.</font></html>"); card.add(heading, BorderLayout.NORTH);
+        JPanel form = new JPanel(new GridLayout(3, 2, 18, 14)); form.setOpaque(false);
+        form.add(field("Date (yyyy-MM-dd)", date)); form.add(field("Amount (₹)", amount)); form.add(field("Type", type)); form.add(field("Category", category)); form.add(field("Description", description)); form.add(new JLabel());
+        card.add(form, BorderLayout.CENTER);
+        JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT)); actions.setOpaque(false); JButton clear = new JButton("Clear"), save = new JButton("Save Transaction"); Theme.secondary(clear); Theme.primary(save);
+        actions.add(feedback); actions.add(clear); actions.add(save); card.add(actions, BorderLayout.SOUTH);
+        clear.addActionListener(e -> clear()); save.addActionListener(e -> save()); add(card);
+    }
+
+    private JPanel field(String label, JComponent input) { JPanel panel = new JPanel(new BorderLayout(0, 5)); panel.setOpaque(false); JLabel caption = new JLabel(label); caption.setForeground(Theme.MUTED); caption.setFont(Theme.BOLD); panel.add(caption, BorderLayout.NORTH); panel.add(input); return panel; }
+    private void save() {
+        try {
+            LocalDate parsedDate = Validator.parseDate(date.getText()); Validator.validateTransaction(parsedDate, (String) type.getSelectedItem(), (String) category.getSelectedItem());
+            frame.database().add(new Transaction(parsedDate, (String) type.getSelectedItem(), (String) category.getSelectedItem(), Validator.parseAmount(amount.getText()), description.getText().trim()));
+            clear(); frame.refreshAll(); feedback.setText("Saved successfully."); feedback.setForeground(Theme.INCOME); frame.showSuccess("Transaction saved successfully.");
+        } catch (IllegalArgumentException ex) { frame.showValidation(ex.getMessage()); } catch (Exception ex) { frame.showError(ex); }
+    }
+    private void clear() { date.setText(LocalDate.now().toString()); type.setSelectedIndex(0); category.setSelectedIndex(0); amount.setText(""); description.setText(""); }
+}
+
+
+================================================================================
+FILE: src\main\java\financetracker\Validator.java
+================================================================================
+package financetracker;
+
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
+import java.time.format.ResolverStyle;
+
+/** Validates user-entered transactions and filter values. */
+public final class Validator {
+    private static final DateTimeFormatter DATE_FORMAT =
+            DateTimeFormatter.ofPattern("uuuu-MM-dd").withResolverStyle(ResolverStyle.STRICT);
+    private Validator() { }
+
+    /** Parses a valid, non-future ISO date or throws a user-friendly error. */
+    public static LocalDate parseDate(String value) {
+        try {
+            LocalDate date = LocalDate.parse(value.trim(), DATE_FORMAT);
+            if (date.isAfter(LocalDate.now())) throw new IllegalArgumentException("Date cannot be in the future.");
+            return date;
+        } catch (DateTimeParseException | NullPointerException ex) {
+            throw new IllegalArgumentException("Please enter a valid date (yyyy-MM-dd).");
+        }
+    }
+
+    /** Parses a positive whole-number amount after removing separators. */
+    public static long parseAmount(String value) {
+        if (value == null || value.trim().isEmpty()) throw new IllegalArgumentException("Please enter the amount.");
+        String normalized = value.replace(",", "").replace(" ", "").trim();
+        if (!normalized.matches("\\d+")) throw new IllegalArgumentException("Amount must be a whole number greater than 0.");
+        try {
+            long amount = Long.parseLong(normalized);
+            if (amount <= 0 || amount > 100_000_000L) throw new NumberFormatException();
+            return amount;
+        } catch (NumberFormatException ex) {
+            throw new IllegalArgumentException("Amount must be a whole number greater than 0.");
+        }
+    }
+
+    /** Validates the remaining transaction fields. */
+    public static void validateTransaction(LocalDate date, String type, String category) {
+        if (date == null || date.isAfter(LocalDate.now())) throw new IllegalArgumentException("Date cannot be in the future.");
+        if (!"Income".equals(type) && !"Expense".equals(type)) throw new IllegalArgumentException("Type must be Income or Expense.");
+        if (category == null || category.trim().isEmpty()) throw new IllegalArgumentException("Category must not be empty.");
+    }
+}
+
+

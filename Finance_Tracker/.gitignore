@@ -1,5 +1,3 @@
-finance.db
-.venv/
-venv/
-__pycache__/
-*.py[cod]
+FinanceTrackerJava/target/
+FinanceTrackerJava/finance.db
+*.class
